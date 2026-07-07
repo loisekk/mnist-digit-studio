@@ -527,15 +527,15 @@ with col_result:
                 fig.update_layout(
                     height=260,
                     margin=dict(l=10, r=10, t=10, b=10),
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="#0d1f1b",
+                    paper_bgcolor="#0d1f1b",
                     xaxis=dict(
                         tickmode="linear", tick0=0, dtick=1,
-                        color="#7fa596", gridcolor="rgba(45,212,168,0.08)",
+                        color="#7fa596", gridcolor="rgba(45,212,168,0.15)",
                         title="Digit",
                     ),
                     yaxis=dict(
-                        color="#7fa596", gridcolor="rgba(45,212,168,0.08)",
+                        color="#7fa596", gridcolor="rgba(45,212,168,0.15)",
                         title=("Probability" if is_calibrated else "Softmax(margin)"),
                         range=[0, max(probs) * 1.25],
                     ),
@@ -617,18 +617,18 @@ with hist_tabs[0]:
         ))
     fig_anim.update_layout(
         height=420,
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="#0d1f1b",
+        paper_bgcolor="#0d1f1b",
         font=dict(family="JetBrains Mono, monospace", size=11, color="#eafff6"),
         xaxis=dict(
             title="Epoch", dtick=1,
-            color="#7fa596", gridcolor="rgba(45,212,168,0.08)",
+            color="#7fa596", gridcolor="rgba(45,212,168,0.15)",
         ),
         yaxis=dict(
             title=metric_choice,
-            color="#7fa596", gridcolor="rgba(45,212,168,0.08)",
+            color="#7fa596", gridcolor="rgba(45,212,168,0.15)",
         ),
-        legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="#eafff6")),
+        legend=dict(bgcolor="rgba(13,31,27,0.8)", font=dict(color="#eafff6")),
         margin=dict(l=50, r=20, t=20, b=50),
     )
     st.plotly_chart(fig_anim, use_container_width=True, config={"displayModeBar": False})
@@ -648,16 +648,16 @@ with hist_tabs[1]:
         ))
     fig3d.update_layout(
         height=520,
-        paper_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="#0d1f1b",
         scene=dict(
-            xaxis=dict(title="Epoch", backgroundcolor="rgba(13,31,27,0.6)",
-                       gridcolor="rgba(45,212,168,0.15)", color="#7fa596"),
-            yaxis=dict(title="Val Accuracy", backgroundcolor="rgba(13,31,27,0.6)",
-                       gridcolor="rgba(45,212,168,0.15)", color="#7fa596"),
-            zaxis=dict(title="Val Loss", backgroundcolor="rgba(13,31,27,0.6)",
-                       gridcolor="rgba(45,212,168,0.15)", color="#7fa596"),
+            xaxis=dict(title="Epoch", backgroundcolor="#0d1f1b",
+                       gridcolor="rgba(45,212,168,0.2)", color="#7fa596"),
+            yaxis=dict(title="Val Accuracy", backgroundcolor="#0d1f1b",
+                       gridcolor="rgba(45,212,168,0.2)", color="#7fa596"),
+            zaxis=dict(title="Val Loss", backgroundcolor="#0d1f1b",
+                       gridcolor="rgba(45,212,168,0.2)", color="#7fa596"),
         ),
-        legend=dict(bgcolor="rgba(0,0,0,0)", font=dict(color="#eafff6")),
+        legend=dict(bgcolor="rgba(13,31,27,0.8)", font=dict(color="#eafff6")),
         font=dict(family="JetBrains Mono, monospace", color="#eafff6"),
         margin=dict(l=0, r=0, t=10, b=0),
     )
