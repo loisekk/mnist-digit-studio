@@ -696,7 +696,7 @@ if "live histories" not in st.session_state:
 
 live_col, saved_col = st.columns([1, 1])
 with live_col:
-    train_clicked = st.button("▶ Train Models Live (MNIST, ~2 min)", key="train_btn")
+    train_clicked = st.button("▶ Train Models Live (MNIST, ~30s)", key="train_btn")
 with saved_col:
     if st.session_state["live histories"] is not None:
         if st.button("↩ Load Saved Results", key="load_saved_btn"):
@@ -710,20 +710,28 @@ if train_clicked:
     st.info("Loading MNIST dataset...")
     X_train_img, X_test_img, X_train_flat, X_test_flat, y_train_cat, y_test_cat = load_mnist_data()
 
+    SUBSET = 10000
+    EPOCHS_LIVE = 5
+    X_train_sub = X_train_img[:SUBSET]
+    X_test_sub = X_test_img[:SUBSET]
+    y_train_sub = y_train_cat[:SUBSET]
+    y_test_sub = y_test_cat[:SUBSET]
+    X_train_3d = X_train_sub.reshape(-1, 28, 28)
+    X_test_3d = X_test_sub.reshape(-1, 28, 28)
+
     chart_ph = st.empty()
     status_ph = st.empty()
-
-    X_train_3d = X_train_img.reshape(-1, 28, 28)
-    X_test_3d = X_test_img.reshape(-1, 28, 28)
+    progress = st.progress(0, text="Starting training...")
 
     models_to_train = [
         ("Perceptron", build_perceptron, X_train_3d, X_test_3d),
         ("ANN", build_ann, X_train_3d, X_test_3d),
-        ("CNN", build_cnn, X_train_img, X_test_img),
+        ("CNN", build_cnn, X_train_sub, X_test_sub),
     ]
 
-    for mname, builder, X_tr, X_te in models_to_train:
-        status_ph.info(f"Training **{mname}**...")
+    total_models = len(models_to_train)
+    for idx, (mname, builder, X_tr, X_te) in enumerate(models_to_train):
+        status_ph.info(f"Training **{mname}** ({EPOCHS_LIVE} epochs on {SUBSET:,} samples)...")
         model = builder()
 
         cb = LiveChartCallback(
@@ -738,16 +746,20 @@ if train_clicked:
         class _LiveCB(KerasCB):
             def on_epoch_end(self_inner, epoch, logs=None):
                 cb.on_epoch_end(epoch, logs)
+                done = (idx * EPOCHS_LIVE + epoch + 1)
+                total = total_models * EPOCHS_LIVE
+                progress.progress(done / total, text=f"{mname} — epoch {epoch+1}/{EPOCHS_LIVE}")
 
         model.fit(
-            X_tr, y_train_cat,
-            epochs=10, batch_size=32,
-            validation_data=(X_te, y_test_cat),
+            X_tr, y_train_sub,
+            epochs=EPOCHS_LIVE, batch_size=64,
+            validation_data=(X_te, y_test_sub),
             callbacks=[_LiveCB()],
             verbose=0,
         )
         status_ph.success(f"✅ {mname} done — val acc: {cb.logs[-1]['val_acc']*100:.1f}%")
 
+    progress.progress(1.0, text="All models trained!")
     status_ph.success("All models trained!")
     st.rerun()
 
