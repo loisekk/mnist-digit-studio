@@ -233,6 +233,121 @@ MODEL_REGISTRY = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Live training — trains all three models from scratch on MNIST, updating
+# charts epoch-by-epoch. Only runs when the user clicks "Train Models".
+# ---------------------------------------------------------------------------
+@st.cache_data(show_spinner=False)
+def load_mnist_data():
+    from tensorflow.keras.datasets import mnist
+    from tensorflow.keras.utils import to_categorical
+    (X_train, y_train), (X_test, y_test) = mnist.load_data()
+    X_train_img = X_train.reshape(-1, 28, 28, 1).astype("float32") / 255.0
+    X_test_img = X_test.reshape(-1, 28, 28, 1).astype("float32") / 255.0
+    X_train_flat = X_train_img.reshape(-1, 784)
+    X_test_flat = X_test_img.reshape(-1, 784)
+    y_train_cat = to_categorical(y_train, 10)
+    y_test_cat = to_categorical(y_test, 10)
+    return X_train_img, X_test_img, X_train_flat, X_test_flat, y_train_cat, y_test_cat
+
+
+def build_perceptron():
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.layers import Flatten, Dense
+    model = Sequential([
+        Flatten(input_shape=(28, 28)),
+        Dense(10, activation="softmax"),
+    ])
+    model.compile(optimizer="sgd", loss="categorical_crossentropy", metrics=["accuracy"])
+    return model
+
+
+def build_ann():
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.layers import Flatten, Dense
+    model = Sequential([
+        Flatten(input_shape=(28, 28)),
+        Dense(128, activation="relu"),
+        Dense(64, activation="relu"),
+        Dense(10, activation="softmax"),
+    ])
+    model.compile(optimizer="adam", loss="categorical_crossentropy", metrics=["accuracy"])
+    return model
+
+
+def build_cnn():
+    from tensorflow.keras.models import Sequential
+    from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+    model = Sequential([
+        Conv2D(32, (3, 3), activation="relu", input_shape=(28, 28, 1)),
+        MaxPooling2D((2, 2)),
+        Conv2D(64, (3, 3), activation="relu"),
+        MaxPooling2D((2, 2)),
+        Flatten(),
+        Dense(128, activation="relu"),
+        Dropout(0.5),
+        Dense(10, activation="softmax"),
+    ])
+    model.compile(optimizer="adam", loss="categorical_crossentropy", metrics=["accuracy"])
+    return model
+
+
+class LiveChartCallback:
+    """Keras training callback that updates a Streamlit chart after each epoch."""
+
+    def __init__(self, chart_placeholder, metric_key, model_name, color, all_histories):
+        self.chart_placeholder = chart_placeholder
+        self.metric_key = metric_key
+        self.model_name = model_name
+        self.color = color
+        self.all_histories = all_histories
+        self.logs = []
+
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        self.logs.append({
+            "train_acc": logs.get("accuracy", 0),
+            "val_acc": logs.get("val_accuracy", 0),
+            "train_loss": logs.get("loss", 0),
+            "val_loss": logs.get("val_loss", 0),
+        })
+        self.all_histories[self.model_name] = {
+            "epochs": list(range(1, len(self.logs) + 1)),
+            "train_acc": [l["train_acc"] for l in self.logs],
+            "val_acc": [l["val_acc"] for l in self.logs],
+            "train_loss": [l["train_loss"] for l in self.logs],
+            "val_loss": [l["val_loss"] for l in self.logs],
+        }
+        self._update_chart()
+
+    def _update_chart(self):
+        key = self.metric_key
+        fig = go.Figure()
+        for mname, color in MODEL_COLORS.items():
+            h = self.all_histories.get(mname)
+            if not h or not h.get("epochs"):
+                continue
+            fig.add_trace(go.Scatter(
+                x=h["epochs"], y=h[key],
+                mode="lines+markers", name=mname,
+                line=dict(color=color, width=3),
+                marker=dict(size=7),
+            ))
+        fig.update_layout(
+            height=420,
+            plot_bgcolor="#0d1f1b", paper_bgcolor="#0d1f1b",
+            font=dict(family="JetBrains Mono, monospace", size=11, color="#eafff6"),
+            xaxis=dict(title="Epoch", dtick=1, color="#7fa596",
+                       gridcolor="rgba(45,212,168,0.15)"),
+            yaxis=dict(title="Validation accuracy" if "acc" in key else "Validation loss",
+                       color="#7fa596", gridcolor="rgba(45,212,168,0.15)"),
+            legend=dict(bgcolor="rgba(13,31,27,0.8)", font=dict(color="#eafff6")),
+            margin=dict(l=50, r=20, t=20, b=50),
+        )
+        self.chart_placeholder.plotly_chart(fig, use_container_width=True,
+                                           config={"displayModeBar": False})
+
+
 def softmax(x):
     e = np.exp(x - np.max(x))
     return e / e.sum()
@@ -568,33 +683,84 @@ if processed_array is not None and predict_clicked:
 
 
 # ---------------------------------------------------------------------------
-# Training Insights — animated epoch-by-epoch curves + 3D comparison surface.
-#
-# IMPORTANT: none of this is real training telemetry. The source notebooks
-# never serialized history.history, so there is nothing real to load. These
-# curves are synthetic, shaped to match documented MNIST benchmark behavior
-# for each architecture (see simulated_history.py for exact assumptions).
-# This is disclosed on-chart, not just in code, because a chart that looks
-# like a real training log but isn't is a credibility problem if this app
-# gets screenshotted or demoed without the surrounding conversation.
+# Training Insights — live training or saved curves + 3D comparison surface.
 # ---------------------------------------------------------------------------
 st.write("")
 st.markdown('<div class="panel">', unsafe_allow_html=True)
 st.markdown("#### 📈 Training Insights")
 
-ALL_HISTORIES = {m: get_history(m) for m in MODEL_REGISTRY.keys()}
-any_simulated = any(h.get("simulated", True) for h in ALL_HISTORIES.values())
-if any_simulated:
+MODEL_COLORS = {"Perceptron": "#f5b942", "ANN": "#a78bfa", "CNN": "#2dd4a8"}
+
+if "live histories" not in st.session_state:
+    st.session_state["live histories"] = None
+
+live_col, saved_col = st.columns([1, 1])
+with live_col:
+    train_clicked = st.button("▶ Train Models Live (MNIST, ~2 min)", key="train_btn")
+with saved_col:
+    if st.session_state["live histories"] is not None:
+        if st.button("↩ Load Saved Results", key="load_saved_btn"):
+            st.session_state["live histories"] = None
+            st.rerun()
+
+if train_clicked:
+    st.session_state["live histories"] = {}
+    live_hist = st.session_state["live histories"]
+
+    st.info("Loading MNIST dataset...")
+    X_train_img, X_test_img, X_train_flat, X_test_flat, y_train_cat, y_test_cat = load_mnist_data()
+
+    chart_ph = st.empty()
+    status_ph = st.empty()
+
+    models_to_train = [
+        ("Perceptron", build_perceptron, X_train_flat, X_test_flat),
+        ("ANN", build_ann, X_train_flat, X_test_flat),
+        ("CNN", build_cnn, X_train_img, X_test_img),
+    ]
+
+    for mname, builder, X_tr, X_te in models_to_train:
+        status_ph.info(f"Training **{mname}**...")
+        model = builder()
+
+        cb = LiveChartCallback(
+            chart_placeholder=chart_ph,
+            metric_key="val_acc",
+            model_name=mname,
+            color=MODEL_COLORS[mname],
+            all_histories=live_hist,
+        )
+
+        from tensorflow.keras.callbacks import Callback as KerasCB
+        class _LiveCB(KerasCB):
+            def on_epoch_end(self_inner, epoch, logs=None):
+                cb.on_epoch_end(epoch, logs)
+
+        model.fit(
+            X_tr, y_train_cat,
+            epochs=10, batch_size=32,
+            validation_data=(X_te, y_test_cat),
+            callbacks=[_LiveCB()],
+            verbose=0,
+        )
+        status_ph.success(f"✅ {mname} done — val acc: {cb.logs[-1]['val_acc']*100:.1f}%")
+
+    status_ph.success("All models trained!")
+    st.rerun()
+
+ALL_HISTORIES = st.session_state["live histories"] or {m: get_history(m) for m in MODEL_REGISTRY.keys()}
+using_live = st.session_state["live histories"] is not None
+
+if not using_live:
     st.markdown(
         '<div class="disclaimer-box">'
-        '⚠ Some curves use synthetic data (original notebook did not save logs).'
+        '⚠ Showing saved results. Click <b>▶ Train Models Live</b> to watch real training.'
         '</div>',
         unsafe_allow_html=True,
     )
 st.write("")
 
 hist_tabs = st.tabs(["Animated accuracy/loss", "3D comparison surface", "Final metrics"])
-MODEL_COLORS = {"Perceptron": "#f5b942", "ANN": "#a78bfa", "CNN": "#2dd4a8"}
 
 with hist_tabs[0]:
     metric_choice = st.radio(
@@ -605,28 +771,23 @@ with hist_tabs[0]:
 
     fig_anim = go.Figure()
     for mname, color in MODEL_COLORS.items():
-        h = ALL_HISTORIES[mname]
+        h = ALL_HISTORIES.get(mname)
+        if not h:
+            continue
         fig_anim.add_trace(go.Scatter(
-            x=h["epochs"],
-            y=h[key],
-            mode="lines+markers",
-            name=mname,
+            x=h["epochs"], y=h[key],
+            mode="lines+markers", name=mname,
             line=dict(color=color, width=3),
             marker=dict(size=7),
         ))
     fig_anim.update_layout(
         height=420,
-        plot_bgcolor="#0d1f1b",
-        paper_bgcolor="#0d1f1b",
+        plot_bgcolor="#0d1f1b", paper_bgcolor="#0d1f1b",
         font=dict(family="JetBrains Mono, monospace", size=11, color="#eafff6"),
-        xaxis=dict(
-            title="Epoch", dtick=1,
-            color="#7fa596", gridcolor="rgba(45,212,168,0.15)",
-        ),
-        yaxis=dict(
-            title=metric_choice,
-            color="#7fa596", gridcolor="rgba(45,212,168,0.15)",
-        ),
+        xaxis=dict(title="Epoch", dtick=1, color="#7fa596",
+                   gridcolor="rgba(45,212,168,0.15)"),
+        yaxis=dict(title=metric_choice, color="#7fa596",
+                   gridcolor="rgba(45,212,168,0.15)"),
         legend=dict(bgcolor="rgba(13,31,27,0.8)", font=dict(color="#eafff6")),
         margin=dict(l=50, r=20, t=20, b=50),
     )
@@ -635,19 +796,17 @@ with hist_tabs[0]:
 with hist_tabs[1]:
     fig3d = go.Figure()
     for mname, color in MODEL_COLORS.items():
-        h = ALL_HISTORIES[mname]
+        h = ALL_HISTORIES.get(mname)
+        if not h:
+            continue
         fig3d.add_trace(go.Scatter3d(
-            x=h["epochs"],
-            y=h["val_acc"],
-            z=h["val_loss"],
-            mode="lines+markers",
-            name=mname,
+            x=h["epochs"], y=h["val_acc"], z=h["val_loss"],
+            mode="lines+markers", name=mname,
             line=dict(color=color, width=5),
             marker=dict(size=4, color=color),
         ))
     fig3d.update_layout(
-        height=520,
-        paper_bgcolor="#0d1f1b",
+        height=520, paper_bgcolor="#0d1f1b",
         scene=dict(
             xaxis=dict(title="Epoch", backgroundcolor="#0d1f1b",
                        gridcolor="rgba(45,212,168,0.2)", color="#7fa596"),
@@ -661,18 +820,16 @@ with hist_tabs[1]:
         margin=dict(l=0, r=0, t=10, b=0),
     )
     st.plotly_chart(fig3d, use_container_width=True, config={"displayModeBar": False})
-    st.caption(
-        "Each trajectory traces (epoch, validation accuracy, validation loss) "
-        "for one model across simulated training. Rotate/zoom to inspect."
-    )
+    st.caption("Rotate/zoom to inspect epoch trajectories across models.")
 
 with hist_tabs[2]:
     fcols = st.columns(3)
     for i, mname in enumerate(MODEL_COLORS.keys()):
-        h = ALL_HISTORIES[mname]
+        h = ALL_HISTORIES.get(mname)
         with fcols[i]:
             st.markdown(f"**{mname}**")
-            st.metric("Final val. accuracy", f"{h['val_acc'][-1]*100:.1f}%")
-            st.metric("Final val. loss", f"{h['val_loss'][-1]:.3f}")
+            if h and h.get("val_acc"):
+                st.metric("Final val. accuracy", f"{h['val_acc'][-1]*100:.1f}%")
+                st.metric("Final val. loss", f"{h['val_loss'][-1]:.3f}")
 
 st.markdown("</div>", unsafe_allow_html=True)
