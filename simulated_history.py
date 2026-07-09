@@ -9,18 +9,22 @@ only if the JSON file is missing.
 import json
 from pathlib import Path
 
-_DATA_FILE = Path(__file__).parent / "training_history.json"
+_CANDIDATE_PATHS = [
+    Path(__file__).resolve().parent / "training_history.json",
+    Path.cwd() / "training_history.json",
+]
 _real_data = None
 
 
 def _load_real():
     global _real_data
     if _real_data is None:
-        if _DATA_FILE.exists():
-            with open(_DATA_FILE, encoding="utf-8") as f:
-                _real_data = json.load(f)
-        else:
-            _real_data = {}
+        _real_data = {}
+        for p in _CANDIDATE_PATHS:
+            if p.exists():
+                with open(p, encoding="utf-8") as f:
+                    _real_data = json.load(f)
+                break
     return _real_data
 
 
