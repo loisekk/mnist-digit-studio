@@ -713,9 +713,12 @@ if train_clicked:
     chart_ph = st.empty()
     status_ph = st.empty()
 
+    X_train_3d = X_train_img.reshape(-1, 28, 28)
+    X_test_3d = X_test_img.reshape(-1, 28, 28)
+
     models_to_train = [
-        ("Perceptron", build_perceptron, X_train_flat, X_test_flat),
-        ("ANN", build_ann, X_train_flat, X_test_flat),
+        ("Perceptron", build_perceptron, X_train_3d, X_test_3d),
+        ("ANN", build_ann, X_train_3d, X_test_3d),
         ("CNN", build_cnn, X_train_img, X_test_img),
     ]
 
