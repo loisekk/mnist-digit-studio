@@ -693,6 +693,8 @@ MODEL_COLORS = {"Perceptron": "#f5b942", "ANN": "#a78bfa", "CNN": "#2dd4a8"}
 
 if "live histories" not in st.session_state:
     st.session_state["live histories"] = None
+if "live models" not in st.session_state:
+    st.session_state["live models"] = None
 
 live_col, saved_col = st.columns([1, 1])
 with live_col:
@@ -705,6 +707,7 @@ with saved_col:
 
 if train_clicked:
     st.session_state["live histories"] = {}
+    st.session_state["live models"] = {}
     live_hist = st.session_state["live histories"]
 
     st.info("Loading MNIST dataset...")
@@ -758,8 +761,10 @@ if train_clicked:
             verbose=0,
         )
         status_ph.success(f"✅ {mname} done — val acc: {cb.logs[-1]['val_acc']*100:.1f}%")
+        st.session_state["live models"][mname] = model
 
     progress.progress(1.0, text="All models trained!")
+    st.session_state["subset"] = SUBSET
     status_ph.success("All models trained!")
     st.rerun()
 
@@ -775,7 +780,12 @@ if not using_live:
     )
 st.write("")
 
-hist_tabs = st.tabs(["Animated accuracy/loss", "3D comparison surface", "Final metrics"])
+hist_tabs = st.tabs([
+    "Animated accuracy/loss",
+    "3D comparison surface",
+    "Final metrics",
+    "Error analysis",
+])
 
 with hist_tabs[0]:
     metric_choice = st.radio(
@@ -846,5 +856,120 @@ with hist_tabs[2]:
             if h and h.get("val_acc"):
                 st.metric("Final val. accuracy", f"{h['val_acc'][-1]*100:.1f}%")
                 st.metric("Final val. loss", f"{h['val_loss'][-1]:.3f}")
+
+# ---------------------------------------------------------------------------
+# Error Analysis tab — confusion matrix, misclassified examples, per-digit
+# ---------------------------------------------------------------------------
+with hist_tabs[3]:
+    st.markdown("##### Error Analysis")
+    st.caption("Run live training first, then select a model to inspect errors.")
+    if not using_live:
+        st.info("Click **▶ Train Models Live** to enable error analysis.")
+    else:
+        ea_model = st.selectbox("Model", list(MODEL_COLORS.keys()), key="ea_model")
+        trained_model = st.session_state["live models"].get(ea_model)
+        sub = st.session_state.get("subset", 10000)
+
+        X_train_img, X_test_img, _, _, y_train_cat, y_test_cat = load_mnist_data()
+        X_test_sub = X_test_img[:sub]
+        y_test_sub = y_test_cat[:sub]
+        y_test_labels = np.argmax(y_test_sub, axis=1)
+
+        if trained_model is None:
+            st.warning("Model not found. Re-run training.")
+        else:
+            if ea_model in ("Perceptron", "ANN"):
+                X_test_for_pred = X_test_sub.reshape(-1, 28, 28)
+            else:
+                X_test_for_pred = X_test_sub
+
+            y_pred_proba = trained_model.predict(X_test_for_pred, verbose=0)
+
+        y_pred = np.argmax(y_pred_proba, axis=1)
+        y_true = y_test_labels
+        correct = y_pred == y_true
+        accuracy = correct.mean()
+
+        # --- Per-digit accuracy ---
+        st.markdown("**Per-digit accuracy**")
+        digit_acc = []
+        for d in range(10):
+            mask = y_true == d
+            if mask.sum() > 0:
+                digit_acc.append({"Digit": str(d), "Accuracy": correct[mask].mean(), "Count": int(mask.sum())})
+            else:
+                digit_acc.append({"Digit": str(d), "Accuracy": 0.0, "Count": 0})
+
+        fig_dig = go.Figure()
+        fig_dig.add_trace(go.Bar(
+            x=[d["Digit"] for d in digit_acc],
+            y=[d["Accuracy"] for d in digit_acc],
+            marker_color=[
+                "#2dd4a8" if a >= 0.95 else "#f5b942" if a >= 0.90 else "#ef4444"
+                for a in [d["Accuracy"] for d in digit_acc]
+            ],
+            text=[f'{d["Accuracy"]*100:.1f}%' for d in digit_acc],
+            textposition="outside",
+        ))
+        fig_dig.update_layout(
+            height=300, plot_bgcolor="#0d1f1b", paper_bgcolor="#0d1f1b",
+            font=dict(family="JetBrains Mono, monospace", size=11, color="#eafff6"),
+            xaxis=dict(title="Digit", color="#7fa596"),
+            yaxis=dict(title="Accuracy", range=[0, 1.05], color="#7fa596",
+                       gridcolor="rgba(45,212,168,0.15)"),
+            margin=dict(l=40, r=20, t=10, b=40),
+            showlegend=False,
+        )
+        st.plotly_chart(fig_dig, use_container_width=True, config={"displayModeBar": False})
+
+        # --- Confusion matrix ---
+        st.markdown("**Confusion matrix**")
+        from sklearn.metrics import confusion_matrix as sk_cm
+        cm = sk_cm(y_true, y_pred)
+
+        fig_cm = go.Figure(data=go.Heatmap(
+            z=cm, x=[str(i) for i in range(10)], y=[str(i) for i in range(10)],
+            colorscale=[[0, "#0d1f1b"], [0.3, "#1a5c4a"], [0.7, "#2dd4a8"], [1.0, "#eafff6"]],
+            text=cm, texttemplate="%{text}", textfont=dict(size=13),
+            hovertemplate="True: %{y}<br>Predicted: %{x}<br>Count: %{z}<extra></extra>",
+        ))
+        fig_cm.update_layout(
+            height=400, plot_bgcolor="#0d1f1b", paper_bgcolor="#0d1f1b",
+            font=dict(family="JetBrains Mono, monospace", size=11, color="#eafff6"),
+            xaxis=dict(title="Predicted", color="#7fa596"),
+            yaxis=dict(title="True label", color="#7fa596", autorange="reversed"),
+            margin=dict(l=40, r=20, t=10, b=40),
+        )
+        st.plotly_chart(fig_cm, use_container_width=True, config={"displayModeBar": False})
+
+        # --- Worst confused pairs ---
+        worst = []
+        for i in range(10):
+            for j in range(10):
+                if i != j and cm[i][j] > 0:
+                    worst.append((cm[i][j], f"{i}→{j}"))
+        worst.sort(reverse=True)
+        if worst:
+            st.markdown("**Most common confusions**")
+            wcols = st.columns(min(5, len(worst)))
+            for idx, (count, pair) in enumerate(worst[:5]):
+                with wcols[idx]:
+                    st.metric(pair, f"{count} wrong")
+
+        # --- Misclassified examples ---
+        st.markdown("**Misclassified examples**")
+        mis_idx = np.where(~correct)[0]
+        if len(mis_idx) == 0:
+            st.success("No misclassifications! Perfect score.")
+        else:
+            st.caption(f"{len(mis_idx)} misclassified out of {len(y_true)} ({(1-accuracy)*100:.1f}% error rate)")
+            show_n = min(10, len(mis_idx))
+            picks = np.random.choice(mis_idx, show_n, replace=False)
+            cols = st.columns(show_n)
+            for col, idx in zip(cols, picks):
+                img = X_test_sub[idx].reshape(28, 28)
+                conf = y_pred_proba[idx].max()
+                with col:
+                    st.image(img, width=64, caption=f"T:{y_true[idx]} P:{y_pred[idx]}\n{conf*100:.0f}%", output_format="PNG")
 
 st.markdown("</div>", unsafe_allow_html=True)
