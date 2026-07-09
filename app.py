@@ -581,20 +581,19 @@ if processed_array is not None and predict_clicked:
 st.write("")
 st.markdown('<div class="panel">', unsafe_allow_html=True)
 st.markdown("#### 📈 Training Insights")
-st.markdown(
-    '<div class="disclaimer-box">'
-    '⚠ SIMULATED DATA — the original notebooks did not save real epoch-by-epoch '
-    'training logs. Curves below are synthetic, shaped to match documented MNIST '
-    'benchmark ranges for each architecture (Perceptron ~86-88%, ANN ~97-98%, '
-    'CNN ~98-99% val. accuracy). Not measured from an actual training run.'
-    '</div>',
-    unsafe_allow_html=True,
-)
+
+ALL_HISTORIES = {m: get_history(m) for m in MODEL_REGISTRY.keys()}
+any_simulated = any(h.get("simulated", True) for h in ALL_HISTORIES.values())
+if any_simulated:
+    st.markdown(
+        '<div class="disclaimer-box">'
+        '⚠ Some curves use synthetic data (original notebook did not save logs).'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 st.write("")
 
 hist_tabs = st.tabs(["Animated accuracy/loss", "3D comparison surface", "Final metrics"])
-
-ALL_HISTORIES = {m: get_history(m) for m in MODEL_REGISTRY.keys()}
 MODEL_COLORS = {"Perceptron": "#f5b942", "ANN": "#a78bfa", "CNN": "#2dd4a8"}
 
 with hist_tabs[0]:
